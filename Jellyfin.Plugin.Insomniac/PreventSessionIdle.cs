@@ -1,18 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
-using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Events.Session;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
-using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+
+using Jellyfin.Plugin.Insomniac.Inhibitor;
 
 namespace Jellyfin.Plugin.Insomniac;
 
@@ -22,6 +19,8 @@ namespace Jellyfin.Plugin.Insomniac;
 public sealed class PreventSessionIdle : IEventConsumer<SessionStartedEventArgs>, IEventConsumer<SessionEndedEventArgs>
 {
     private readonly ILogger<PreventSessionIdle> _logger;
+
+    private static IInhibitor? _inhibitor;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PreventSessionIdle"/> class.
@@ -38,15 +37,26 @@ public sealed class PreventSessionIdle : IEventConsumer<SessionStartedEventArgs>
     {
         _logger = loggerFactory.CreateLogger<PreventSessionIdle>();
         _logger.LogInformation("Created");
+
+        if (_inhibitor == null)
+        {
+            _inhibitor = new DbusLoginManagerInhibitor();
+        }
     }
 
     public async Task OnEvent(SessionStartedEventArgs eventArgs)
     {
         _logger.LogInformation("SessionStarted");
+
+        // TODO: only inhibit non-local users
+
+        await _inhibitor!.Increment().ConfigureAwait(false);
     }
 
     public async Task OnEvent(SessionEndedEventArgs eventArgs)
     {
         _logger.LogInformation("SessionEnded");
+
+        await _inhibitor!.Decrement().ConfigureAwait(false);
     }
 }
