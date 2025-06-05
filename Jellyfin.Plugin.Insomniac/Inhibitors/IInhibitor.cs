@@ -1,10 +1,9 @@
+using System;
 using System.Threading.Tasks;
 
-namespace Jellyfin.Plugin.Insomniac.Inhibitor;
+namespace Jellyfin.Plugin.Insomniac.Inhibitors;
 
-interface IInhibitor
+internal interface IInhibitor
 {
-    Task Increment();
-
-    Task Decrement();
+    Task<Func<Task>> Inhibit(string reason);
 }
