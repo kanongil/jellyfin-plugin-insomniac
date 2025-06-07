@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Insomniac.Inhibitors;
@@ -32,6 +31,7 @@ public sealed class IdleInhibitorManager
 
     public sealed class IdleInhibitor : IAsyncDisposable
     {
+        private readonly TaskFactory _runQueue = new(new ConcurrentExclusiveSchedulerPair(TaskScheduler.Default, 1).ExclusiveScheduler);
         private readonly IIdleInhibitor _inhibitor;
 
         private readonly string _reason;
@@ -58,43 +58,10 @@ public sealed class IdleInhibitorManager
 
         private async Task InhibitInternal()
         {
-            if (_releaseFunc == null) // TODO: avoid race
+            if (_releaseFunc == null)
             {
                 _releaseFunc = await _inhibitor.Inhibit(_reason).ConfigureAwait(false);
             }
-        }
-
-        public void Inhibit()
-        {
-            Task.Run(async () =>
-            {
-                await ResetDelay().ConfigureAwait(false);
-
-                await InhibitInternal().ConfigureAwait(false);
-            });
-        }
-
-        public void Inhibit(TimeSpan duration)
-        {
-            Task.Run(async () =>
-            {
-                await ResetDelay().ConfigureAwait(false);
-
-                var delaySource = _delaySource = new CancellationTokenSource(duration);
-
-                Task.Delay(-1, _delaySource.Token)
-                    .ContinueWith(async (a) => {
-
-                        // Check that this is a cancellation caused by the timeout
-
-                        if (_delaySource == delaySource)
-                        {
-                            await UnInhibitInternal();
-                        }
-                    });
-
-                await InhibitInternal().ConfigureAwait(false);
-            });
         }
 
         private async Task UnInhibitInternal()
@@ -110,9 +77,58 @@ public sealed class IdleInhibitorManager
             }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2008:Do not create tasks without passing a TaskScheduler", Justification = "There is a TaskScheduler")]
+        public void Inhibit()
+        {
+            _runQueue.StartNew(async () =>
+            {
+                await ResetDelay().ConfigureAwait(false);
+
+                await InhibitInternal().ConfigureAwait(false);
+            });
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2008:Do not create tasks without passing a TaskScheduler", Justification = "There is a TaskScheduler")]
+        public void Inhibit(TimeSpan duration)
+        {
+            TaskFactory factory = new TaskFactory(TaskScheduler.Current);
+
+            _runQueue.StartNew(async () =>
+            {
+                await ResetDelay().ConfigureAwait(false);
+
+                var delaySource = _delaySource = new CancellationTokenSource(duration);
+
+                _ = factory.StartNew(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(-1, _delaySource.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException e)
+                    {
+                        _ = e; // Ignore
+                    }
+
+                    // Check that this is a cancellation caused by the timeout
+
+                    _ = _runQueue.StartNew(async () =>
+                    {
+                        if (_delaySource == delaySource)
+                        {
+                            await UnInhibitInternal().ConfigureAwait(false);
+                        }
+                    });
+                });
+
+                await InhibitInternal().ConfigureAwait(false);
+            });
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2008:Do not create tasks without passing a TaskScheduler", Justification = "There is a TaskScheduler")]
         public void UnInhibit()
         {
-            Task.Run(UnInhibitInternal);
+            _runQueue.StartNew(UnInhibitInternal);
         }
 
         /// <inheritdoc/>
