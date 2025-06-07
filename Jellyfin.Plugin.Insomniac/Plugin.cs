@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using Jellyfin.Data.Events;
 using Jellyfin.Plugin.Insomniac.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
@@ -12,6 +13,7 @@ using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
+using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Insomniac;
@@ -26,11 +28,17 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
 {
     private const string SessionInhibitReason = "Active remote user session(s)";
 
+    private const string TaskInhibitReason = "Running scheduled task(s)";
+
     private readonly IdleInhibitorManager _idleInhibitorManager;
     private readonly IdleInhibitorManager.IdleInhibitor _sessionIdleInhibitor;
+    private readonly IdleInhibitorManager.IdleInhibitor _taskIdleInhibitor;
     private readonly ILogger<Plugin> _logger;
     private readonly IReadOnlyList<IPData> _localInterfaces;
     private readonly ISessionManager _sessionManager;
+    private readonly ITaskManager _taskManager;
+
+    private int _activeTasks;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -39,12 +47,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
     /// <param name="xmlSerializer">Instance of the <see cref="IXmlSerializer"/> interface.</param>
     /// <param name="sessionManager">Instance of the <see cref="ISessionManager"/> interface.</param>
     /// <param name="networkManager">Instance of the <see cref="INetworkManager"/> interface.</param>
+    /// <param name="taskManager">Instance of the <see cref="ITaskManager"/> interface.</param>
     /// <param name="loggerFactory">Logger.</param>
     public Plugin(
         IApplicationPaths applicationPaths,
         IXmlSerializer xmlSerializer,
         ISessionManager sessionManager,
         INetworkManager networkManager,
+        ITaskManager taskManager,
         ILoggerFactory loggerFactory)
         : base(applicationPaths, xmlSerializer)
     {
@@ -53,10 +63,15 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
         _logger = loggerFactory.CreateLogger<Plugin>();
         _idleInhibitorManager = new IdleInhibitorManager(loggerFactory);
         _sessionIdleInhibitor = _idleInhibitorManager.CreateInhibitor(SessionInhibitReason);
+        _taskIdleInhibitor = _idleInhibitorManager.CreateInhibitor(TaskInhibitReason);
         _localInterfaces = networkManager.GetAllBindInterfaces(true);
         _sessionManager = sessionManager;
+        _taskManager = taskManager;
 
         sessionManager.SessionActivity += OnSessionManagerSessionActivity;
+
+        taskManager.TaskExecuting += OnTaskExecuting;
+        taskManager.TaskCompleted += OnTaskCompleted;
     }
 
     /// <inheritdoc />
@@ -111,7 +126,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
     /// </summary>
     private void OnSessionManagerSessionActivity(object? sender, SessionEventArgs e)
     {
-        _logger.LogInformation("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
+        _logger.LogDebug("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
 
         if (!Configuration.OnlyInhibitRemote || IsRemoteSession(e.SessionInfo))
         {
@@ -120,11 +135,33 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
         }
     }
 
+    private void OnTaskExecuting(object? sender, GenericEventArgs<IScheduledTaskWorker> e)
+    {
+        _logger.LogDebug("TaskExecuting: {0}", e.Argument.Name);
+
+        _activeTasks++;
+        _taskIdleInhibitor.Inhibit();
+    }
+
+    private void OnTaskCompleted(object? sender, TaskCompletionEventArgs e)
+    {
+        _activeTasks--;
+        if (_activeTasks == 0)
+        {
+            _taskIdleInhibitor.UnInhibit();
+        }
+    }
+
     /// <inheritdoc/>
     public async ValueTask DisposeAsync() // TODO: use this
     {
         _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
+        _taskManager.TaskExecuting -= OnTaskExecuting;
+        _taskManager.TaskCompleted -= OnTaskCompleted;
+
         await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+        await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+
         GC.SuppressFinalize(this);
     }
 }
