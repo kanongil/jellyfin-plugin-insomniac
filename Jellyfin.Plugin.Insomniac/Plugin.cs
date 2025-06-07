@@ -2,11 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Insomniac.Configuration;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Common.Net;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging;
@@ -26,20 +29,22 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
     private readonly IdleInhibitorManager _idleInhibitorManager;
     private readonly IdleInhibitorManager.IdleInhibitor _sessionIdleInhibitor;
     private readonly ILogger<Plugin> _logger;
-
-    private TimeSpan _activityDelay = TimeSpan.FromSeconds(300);
+    private readonly IReadOnlyList<IPData> _localInterfaces;
+    private readonly ISessionManager _sessionManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
     /// </summary>
     /// <param name="applicationPaths">Instance of the <see cref="IApplicationPaths"/> interface.</param>
     /// <param name="xmlSerializer">Instance of the <see cref="IXmlSerializer"/> interface.</param>
-    /// <param name="sessionManager">Instance. </param>
+    /// <param name="sessionManager">Instance of the <see cref="ISessionManager"/> interface.</param>
+    /// <param name="networkManager">Instance of the <see cref="INetworkManager"/> interface.</param>
     /// <param name="loggerFactory">Logger.</param>
     public Plugin(
         IApplicationPaths applicationPaths,
         IXmlSerializer xmlSerializer,
         ISessionManager sessionManager,
+        INetworkManager networkManager,
         ILoggerFactory loggerFactory)
         : base(applicationPaths, xmlSerializer)
     {
@@ -48,6 +53,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
         _logger = loggerFactory.CreateLogger<Plugin>();
         _idleInhibitorManager = new IdleInhibitorManager(loggerFactory);
         _sessionIdleInhibitor = _idleInhibitorManager.CreateInhibitor(SessionInhibitReason);
+        _localInterfaces = networkManager.GetAllBindInterfaces(true);
+        _sessionManager = sessionManager;
 
         sessionManager.SessionActivity += OnSessionManagerSessionActivity;
     }
@@ -76,9 +83,21 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
         ];
     }
 
+    private bool IsHostAddress(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        return IPAddress.IsLoopback(address) || _localInterfaces.Any((@interface) => @interface.Address.Equals(address));
+    }
+
     private bool IsRemoteSession(SessionInfo session)
     {
-        return true;  // TODO: add proper logic
+        return NetworkUtils.TryParseHost(session.RemoteEndPoint, out var addresses, true, true) && !addresses.Any(IsHostAddress);
     }
 
     /// <summary>
@@ -86,16 +105,20 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
     /// </summary>
     private void OnSessionManagerSessionActivity(object? sender, SessionEventArgs e)
     {
-        _logger.LogInformation("SessionActivity from {0}", e.SessionInfo.RemoteEndPoint);
+        _logger.LogInformation("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
 
-        if (IsRemoteSession(e.SessionInfo))
+        if (!Configuration.OnlyInhibitRemote || IsRemoteSession(e.SessionInfo))
         {
-            _sessionIdleInhibitor.Inhibit(_activityDelay);
+            var delay = TimeSpan.FromSeconds(Configuration.ActivityIdleDelaySeconds);
+            _sessionIdleInhibitor.Inhibit(delay);
         }
     }
 
+    /// <inheritdoc/>
     public async ValueTask DisposeAsync() // TODO: use this
     {
+        _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
         await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
     }
 }
