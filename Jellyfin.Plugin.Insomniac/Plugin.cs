@@ -83,6 +83,12 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
         ];
     }
 
+    /// <summary>
+    /// A best effort check whether the passed address is same as host.
+    /// It always works for loopback addresses.
+    /// </summary>
+    /// <param name="address">The address to check.</param>
+    /// <returns>bool indicating the result.</returns>
     private bool IsHostAddress(IPAddress address)
     {
         ArgumentNullException.ThrowIfNull(address);

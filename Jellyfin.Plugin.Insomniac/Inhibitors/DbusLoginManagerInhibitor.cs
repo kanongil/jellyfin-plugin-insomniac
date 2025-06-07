@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.Insomniac.Inhibitors;
 /// <summary>
 /// Signal inhibition using D-BUS org.freedesktop.login1.Manager.Inhibit().
 /// </summary>
-public sealed class DbusLoginManagerInhibitor : IInhibitor
+public sealed class DbusLoginManagerInhibitor : IIdleInhibitor
 {
     private const string Who = "Jellyfin.Plugin.Insomniac";
 
@@ -32,7 +32,7 @@ public sealed class DbusLoginManagerInhibitor : IInhibitor
         return await proxy.InhibitAsync("idle", Who, reason, "block").ConfigureAwait(false);
     }
 
-    async Task<Func<Task>> IInhibitor.Inhibit(string reason)
+    async Task<Func<Task>> IIdleInhibitor.Inhibit(string reason)
     {
         var inhibitFd = await DoDbusInhibit(reason).ConfigureAwait(false);
         return async () =>

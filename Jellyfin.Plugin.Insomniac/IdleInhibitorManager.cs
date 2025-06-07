@@ -14,7 +14,7 @@ public sealed class IdleInhibitorManager
 {
     private readonly ILogger<IdleInhibitorManager> _logger;
 
-    private readonly IInhibitor _inhibitor = new DbusLoginManagerInhibitor();
+    private readonly IIdleInhibitor _inhibitor = new DbusLoginManagerInhibitor();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IdleInhibitorManager"/> class.
@@ -32,14 +32,14 @@ public sealed class IdleInhibitorManager
 
     public sealed class IdleInhibitor : IAsyncDisposable
     {
-        private readonly IInhibitor _inhibitor;
+        private readonly IIdleInhibitor _inhibitor;
 
         private readonly string _reason;
 
         private Func<Task>? _releaseFunc;
         private CancellationTokenSource? _delaySource;
 
-        internal IdleInhibitor(IInhibitor inhibitor, string reason)
+        internal IdleInhibitor(IIdleInhibitor inhibitor, string reason)
         {
             _inhibitor = inhibitor;
             _reason = reason;
