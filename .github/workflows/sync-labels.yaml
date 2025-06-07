@@ -7,6 +7,6 @@ on:
 
 jobs:
   call:
-    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/sync-labels.yaml@master
+    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/sync-labels.yaml@bf066268236cea6d28519d477ba225ee3c635707
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}

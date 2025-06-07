@@ -2,11 +2,11 @@ name: '🔬 Run CodeQL'
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
     paths-ignore:
       - '**/*.md'
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
     paths-ignore:
       - '**/*.md'
   schedule:
@@ -15,6 +15,6 @@ on:
 
 jobs:
   call:
-    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/scan-codeql.yaml@master
+    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/scan-codeql.yaml@bf066268236cea6d28519d477ba225ee3c635707
     with:
-      repository-name: jellyfin/jellyfin-plugin-template
+      repository-name: kanongil/jellyfin-plugin-insomniac

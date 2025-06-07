@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Template</title>
+    <title>Insomniac</title>
 </head>
 <body>
-    <div id="TemplateConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div id="InsomniacConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
-                <form id="TemplateConfigForm">
+                <form id="InsomniacConfigForm">
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="ActivityIdleDelaySeconds">ActivityIdleDelaySeconds</label>
                         <input id="ActivityIdleDelaySeconds" name="ActivityIdleDelaySeconds" type="number" is="emby-input" min="1" />
@@ -24,27 +24,27 @@
             </div>
         </div>
         <script type="text/javascript">
-            var TemplateConfig = {
+            var InsomniacConfig = {
                 pluginUniqueId: '2b815d95-08e3-4fa8-ac90-8cc9e0b1cc66'
             };
 
-            document.querySelector('#TemplateConfigPage')
+            document.querySelector('#InsomniacConfigPage')
                 .addEventListener('pageshow', function() {
                     Dashboard.showLoadingMsg();
-                    ApiClient.getPluginConfiguration(TemplateConfig.pluginUniqueId).then(function (config) {
+                    ApiClient.getPluginConfiguration(InsomniacConfig.pluginUniqueId).then(function (config) {
                         document.querySelector('#ActivityIdleDelaySeconds').value = config.ActivityIdleDelaySeconds;
                         document.querySelector('#OnlyInhibitRemote').checked = config.OnlyInhibitRemote;
                         Dashboard.hideLoadingMsg();
                     });
                 });
 
-            document.querySelector('#TemplateConfigForm')
+            document.querySelector('#InsomniacConfigForm')
                 .addEventListener('submit', function(e) {
                 Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(TemplateConfig.pluginUniqueId).then(function (config) {
+                ApiClient.getPluginConfiguration(InsomniacConfig.pluginUniqueId).then(function (config) {
                     config.ActivityIdleDelaySeconds = document.querySelector('#ActivityIdleDelaySeconds').value;
                     config.OnlyInhibitRemote = document.querySelector('#OnlyInhibitRemote').checked;
-                    ApiClient.updatePluginConfiguration(TemplateConfig.pluginUniqueId, config).then(function (result) {
+                    ApiClient.updatePluginConfiguration(InsomniacConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });
                 });
