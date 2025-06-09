@@ -32,7 +32,7 @@ public sealed class DbusLoginManagerInhibitor : IIdleInhibitor
         return await proxy.InhibitAsync("idle", Who, reason, "block").ConfigureAwait(false);
     }
 
-    async Task<Func<Task>> IIdleInhibitor.Inhibit(string reason)
+    async Task<Func<Task>> IIdleInhibitor.Inhibit(InhibitorType type, string reason)
     {
         var inhibitFd = await DoDbusInhibit(reason).ConfigureAwait(false);
         return async () =>

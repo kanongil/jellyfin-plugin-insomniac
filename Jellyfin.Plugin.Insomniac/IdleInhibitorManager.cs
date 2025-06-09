@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Insomniac.Inhibitors;
@@ -13,7 +14,7 @@ public sealed class IdleInhibitorManager
 {
     private readonly ILogger<IdleInhibitorManager> _logger;
 
-    private readonly IIdleInhibitor _inhibitor = new DbusLoginManagerInhibitor();
+    private readonly IIdleInhibitor _inhibitor;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IdleInhibitorManager"/> class.
@@ -22,26 +23,36 @@ public sealed class IdleInhibitorManager
     public IdleInhibitorManager(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<IdleInhibitorManager>();
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            _inhibitor = new IOPMInhibitor();
+        }
+        else
+        {
+            _inhibitor = new DbusLoginManagerInhibitor();
+        }
     }
 
-    public IdleInhibitor CreateInhibitor(string reason)
+    public IdleInhibitor CreateInhibitor(InhibitorType type, string reason)
     {
-        return new IdleInhibitor(_inhibitor, reason);
+        return new IdleInhibitor(_inhibitor, type, reason);
     }
 
     public sealed class IdleInhibitor : IAsyncDisposable
     {
         private readonly TaskFactory _runQueue = new(new ConcurrentExclusiveSchedulerPair(TaskScheduler.Default, 1).ExclusiveScheduler);
         private readonly IIdleInhibitor _inhibitor;
-
+        private readonly InhibitorType _type;
         private readonly string _reason;
 
         private Func<Task>? _releaseFunc;
         private CancellationTokenSource? _delaySource;
 
-        internal IdleInhibitor(IIdleInhibitor inhibitor, string reason)
+        internal IdleInhibitor(IIdleInhibitor inhibitor, InhibitorType type, string reason)
         {
             _inhibitor = inhibitor;
+            _type = type;
             _reason = reason;
         }
 
@@ -60,7 +71,7 @@ public sealed class IdleInhibitorManager
         {
             if (_releaseFunc == null)
             {
-                _releaseFunc = await _inhibitor.Inhibit(_reason).ConfigureAwait(false);
+                _releaseFunc = await _inhibitor.Inhibit(_type, _reason).ConfigureAwait(false);
             }
         }
 

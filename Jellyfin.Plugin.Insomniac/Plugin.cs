@@ -6,6 +6,7 @@ using System.Net;
 using System.Threading.Tasks;
 using Jellyfin.Data.Events;
 using Jellyfin.Plugin.Insomniac.Configuration;
+using Jellyfin.Plugin.Insomniac.Inhibitors;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Common.Plugins;
@@ -62,8 +63,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
 
         _logger = loggerFactory.CreateLogger<Plugin>();
         _idleInhibitorManager = new IdleInhibitorManager(loggerFactory);
-        _sessionIdleInhibitor = _idleInhibitorManager.CreateInhibitor(SessionInhibitReason);
-        _taskIdleInhibitor = _idleInhibitorManager.CreateInhibitor(TaskInhibitReason);
+        _sessionIdleInhibitor = _idleInhibitorManager.CreateInhibitor(InhibitorType.NetworkClient, SessionInhibitReason);
+        _taskIdleInhibitor = _idleInhibitorManager.CreateInhibitor(InhibitorType.SystemIdle, TaskInhibitReason);
         _localInterfaces = networkManager.GetAllBindInterfaces(true);
         _sessionManager = sessionManager;
         _taskManager = taskManager;
