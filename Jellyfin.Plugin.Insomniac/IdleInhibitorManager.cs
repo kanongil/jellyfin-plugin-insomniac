@@ -23,15 +23,7 @@ public sealed class IdleInhibitorManager
     public IdleInhibitorManager(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<IdleInhibitorManager>();
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            _inhibitor = new IOPMInhibitor();
-        }
-        else
-        {
-            _inhibitor = new DbusLoginManagerInhibitor();
-        }
+        _inhibitor = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? new IOPMInhibitor() : new DbusLoginManagerInhibitor();
     }
 
     public IdleInhibitor CreateInhibitor(InhibitorType type, string reason)

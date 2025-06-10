@@ -14,7 +14,7 @@ public sealed class IOPMInhibitor : IIdleInhibitor
 {
     private static readonly CFStringRef _kIOPMAssertionTypePreventUserIdleSystemSleep = MacOS.CFStringCreate("PreventUserIdleSystemSleep");
     private static readonly CFStringRef _kIOPMAssertionTypeNetworkClientActive = MacOS.CFStringCreate("NetworkClientActive");
-    private static uint _kIOPMAssertionLevelOn = 255;
+    private const uint _kIOPMAssertionLevelOn = 255;
 
     [DllImport("/System/Library/Frameworks/IOKit.framework/IOKit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     private static extern int IOPMAssertionCreateWithName(
