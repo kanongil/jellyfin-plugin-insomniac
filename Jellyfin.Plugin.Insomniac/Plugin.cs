@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.Insomniac;
 /// Sessions can be abondoned and cannot be used to reliably detect usage / activity.
 /// Thus we use the SessionActivity signal to trigger an IdleInhibit with a timeout, extending it on each invocation.
 /// </summary>
-public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDisposable
+public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 {
     private const string SessionInhibitReason = "Active remote user session(s)";
 
@@ -154,15 +154,25 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IAsyncDispo
     }
 
     /// <inheritdoc/>
-    public async ValueTask DisposeAsync() // TODO: use this
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposing)
     {
         _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
         _taskManager.TaskExecuting -= OnTaskExecuting;
         _taskManager.TaskCompleted -= OnTaskCompleted;
 
+            Task.Run(async () =>
+            {
         await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
         await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-
-        GC.SuppressFinalize(this);
+            }).Wait();
+        }
     }
 }
