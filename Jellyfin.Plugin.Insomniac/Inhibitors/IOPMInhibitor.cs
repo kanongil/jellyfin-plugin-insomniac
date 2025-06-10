@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Insomniac.Platform;
 
 using CFStringRef = nint;
 
@@ -11,20 +12,9 @@ namespace Jellyfin.Plugin.Insomniac.Inhibitors;
 /// </summary>
 public sealed class IOPMInhibitor : IIdleInhibitor
 {
-
-    private static CFStringRef kIOPMAssertionTypePreventUserIdleSystemSleep = CFStringCreate("PreventUserIdleSystemSleep");
-    private static CFStringRef kIOPMAssertionTypeNetworkClientActive = CFStringCreate("NetworkClientActive");
-    private static uint kIOPMAssertionLevelOn = 255;
-
-    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    private static extern CFStringRef CFStringCreateWithCharacters(
-        /* CFAllocatorRef */ IntPtr alloc,
-        /* const UniChar* */ [MarshalAs(UnmanagedType.LPWStr)] string chars,
-        /* CFIndex */ long numChars);
-
-    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    private static extern void CFRelease(
-        /* CFTypeRef */ IntPtr alloc);
+    private static readonly CFStringRef _kIOPMAssertionTypePreventUserIdleSystemSleep = MacOS.CFStringCreate("PreventUserIdleSystemSleep");
+    private static readonly CFStringRef _kIOPMAssertionTypeNetworkClientActive = MacOS.CFStringCreate("NetworkClientActive");
+    private static uint _kIOPMAssertionLevelOn = 255;
 
     [DllImport("/System/Library/Frameworks/IOKit.framework/IOKit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     private static extern int IOPMAssertionCreateWithName(
@@ -34,22 +24,17 @@ public sealed class IOPMInhibitor : IIdleInhibitor
         /* IOPMAssertionID* */ out IntPtr assertionID);
 
     [DllImport("/System/Library/Frameworks/IOKit.framework/IOKit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    private static extern int IOPMAssertionRelease(/* IOPMAssertionID* */ IntPtr AssertionID);
-
-    private static IntPtr CFStringCreate(string value)
-    {
-        return CFStringCreateWithCharacters(IntPtr.Zero, value, value.Length);
-    }
+    private static extern int IOPMAssertionRelease(/* IOPMAssertionID* */ IntPtr assertionID);
 
     async Task<Func<Task>> IIdleInhibitor.Inhibit(InhibitorType type, string reason)
     {
-        CFStringRef cfReason = CFStringCreate(reason);
+        CFStringRef cfReason = MacOS.CFStringCreate(reason);
         IntPtr assertionId;
 
         try
         {
-            CFStringRef assertionType = type == InhibitorType.NetworkClient ? kIOPMAssertionTypeNetworkClientActive : kIOPMAssertionTypePreventUserIdleSystemSleep;
-            int res = IOPMAssertionCreateWithName(assertionType, kIOPMAssertionLevelOn, CFStringCreate(reason), out assertionId);
+            CFStringRef assertionType = type == InhibitorType.NetworkClient ? _kIOPMAssertionTypeNetworkClientActive : _kIOPMAssertionTypePreventUserIdleSystemSleep;
+            int res = IOPMAssertionCreateWithName(assertionType, _kIOPMAssertionLevelOn, MacOS.CFStringCreate(reason), out assertionId);
             if (res != 0)
             {
                 throw new InvalidOperationException($"""Failed to create inhibitor, code={res}""");
@@ -57,7 +42,7 @@ public sealed class IOPMInhibitor : IIdleInhibitor
         }
         finally
         {
-            CFRelease(cfReason);
+            MacOS.CFRelease(cfReason);
         }
 
         return async () =>
