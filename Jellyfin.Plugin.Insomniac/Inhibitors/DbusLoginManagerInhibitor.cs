@@ -23,13 +23,14 @@ public sealed class DbusLoginManagerInhibitor : IIdleInhibitor
 
     private async Task<SafeHandle?> DoDbusInhibit(string reason)
     {
-        Connection connection = new Connection(Address.System);
+        using (Connection connection = new Connection(Address.System))
+        {
+            await connection.ConnectAsync().ConfigureAwait(false);
 
-        await connection.ConnectAsync().ConfigureAwait(false);
+            var proxy = connection.CreateProxy<ILoginManager>("org.freedesktop.login1", "/org/freedesktop/login1");
 
-        var proxy = connection.CreateProxy<ILoginManager>("org.freedesktop.login1", "/org/freedesktop/login1");
-
-        return await proxy.InhibitAsync("idle", Who, reason, "block").ConfigureAwait(false);
+            return await proxy.InhibitAsync("idle", Who, reason, "block").ConfigureAwait(false);
+        }
     }
 
     async Task<Func<Task>> IIdleInhibitor.Inhibit(InhibitorType type, string reason)
