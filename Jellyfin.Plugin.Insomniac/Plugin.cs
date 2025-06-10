@@ -10,6 +10,7 @@ using Jellyfin.Plugin.Insomniac.Inhibitors;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Plugins;
@@ -122,6 +123,15 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         return NetworkUtils.TryParseHost(session.RemoteEndPoint, out var addresses, true, true) && !addresses.Any(IsHostAddress);
     }
 
+    private void HandleUserActivity(SessionInfo sessionInfo)
+    {
+        if (!Configuration.OnlyInhibitRemote || IsRemoteSession(sessionInfo))
+        {
+            var delay = TimeSpan.FromSeconds(Configuration.ActivityIdleDelaySeconds);
+            _sessionIdleInhibitor.Inhibit(delay);
+        }
+    }
+
     /// <summary>
     /// Triggers on session activity with a built-in 10 second throttle (per session).
     /// </summary>
@@ -129,11 +139,17 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     {
         _logger.LogDebug("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
 
-        if (!Configuration.OnlyInhibitRemote || IsRemoteSession(e.SessionInfo))
-        {
-            var delay = TimeSpan.FromSeconds(Configuration.ActivityIdleDelaySeconds);
-            _sessionIdleInhibitor.Inhibit(delay);
+        HandleUserActivity(e.SessionInfo);
         }
+
+    /// <summary>
+    /// Called periodically while a session plays contents, including when paused.
+    /// </summary>
+    private void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
+    {
+        _logger.LogDebug("OnPlaybackProgress from {0}, remote={1}", e.Session.RemoteEndPoint, IsRemoteSession(e.Session));
+
+        HandleUserActivity(e.Session);
     }
 
     private void OnTaskExecuting(object? sender, GenericEventArgs<IScheduledTaskWorker> e)
@@ -165,6 +181,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         if (disposing)
     {
         _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
         _taskManager.TaskExecuting -= OnTaskExecuting;
         _taskManager.TaskCompleted -= OnTaskCompleted;
 
