@@ -14,7 +14,7 @@ public class PluginConfiguration : BasePluginConfiguration
     {
         // set default options here
         OnlyInhibitRemote = true;
-        ActivityIdleDelaySeconds = 300;
+        ActivityIdleDelaySeconds = 120;
     }
 
     /// <summary>
