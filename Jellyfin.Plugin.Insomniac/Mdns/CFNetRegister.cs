@@ -9,24 +9,17 @@ namespace Jellyfin.Plugin.Insomniac.Mdns;
 /// Register Bonjour/Zeroconf service using CFNetwork.
 /// </summary>
 #pragma warning disable CA2216
-public sealed class CFNetRegister : IDisposable
+public sealed class CFNetRegister : BaseRegistrator
 {
     private const string CFNetwork = "/System/Library/Frameworks/CFNetwork.framework/CFNetwork";
     private const int kCFNetServiceErrorCancel = -72005;
 
-    private readonly string _serviceType;
-    private readonly string _name;
-    private readonly int _port;
-
     private IntPtr _service;
-    private Thread _runner;
+    private Thread? _runner;
 
     public CFNetRegister(string serviceType, string name, int port)
+        : base(serviceType, name, port)
     {
-        _serviceType = serviceType;
-        _name = name;
-        _port = port;
-
         Publish();
     }
 
@@ -58,11 +51,11 @@ public sealed class CFNetRegister : IDisposable
         }
 
         var cfDomain = MacOS.CFStringCreate(string.Empty);
-        var cfServiceType = MacOS.CFStringCreate(_serviceType);
-        var cfName = MacOS.CFStringCreate(_name);
+        var cfServiceType = MacOS.CFStringCreate(ServiceType);
+        var cfName = MacOS.CFStringCreate(Name);
         try
         {
-            _service = CFNetServiceCreate(IntPtr.Zero, cfDomain, cfServiceType, cfName, _port);
+            _service = CFNetServiceCreate(IntPtr.Zero, cfDomain, cfServiceType, cfName, Port);
             if (_service == 0)
             {
                 throw new ArgumentException("CFNetServiceCreate() failed");
@@ -110,18 +103,16 @@ public sealed class CFNetRegister : IDisposable
     }
 
     /// <inheritdoc/>
-    public void Dispose()
+    protected override void Unpublish()
     {
         var service = _service;
-        if (service != 0)
+        if (_runner is not null && service != 0)
         {
             // This should make the blocking CFNetServiceRegisterWithOptions() stop running,
             // release the _service, and stop the thread.
             CFNetServiceCancel(service);
             _runner.Join();
         }
-
-        GC.SuppressFinalize(this);
     }
 }
 #pragma warning restore CA2216
