@@ -3,19 +3,23 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Events;
 using Jellyfin.Plugin.Insomniac.Configuration;
 using Jellyfin.Plugin.Insomniac.Inhibitors;
+using Jellyfin.Plugin.Insomniac.Mdns;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Insomniac;
@@ -39,8 +43,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     private readonly IReadOnlyList<IPData> _localInterfaces;
     private readonly ISessionManager _sessionManager;
     private readonly ITaskManager _taskManager;
+    private readonly IServerApplicationHost _appHost;
+    private readonly IConfigurationManager _configurationManager;
+    private readonly CancellationTokenRegistration _startedCallback;
+    private readonly CancellationTokenRegistration _shutdownCallback;
 
+    private CFNetRegister? _cfNet;
     private int _activeTasks;
+    private MdnsConfig? _mdnsConfig;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -57,6 +67,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         ISessionManager sessionManager,
         INetworkManager networkManager,
         ITaskManager taskManager,
+        IServerApplicationHost appHost,
+        IHostApplicationLifetime hostApplicationLifetime,
+        IConfigurationManager configurationManager,
         ILoggerFactory loggerFactory)
         : base(applicationPaths, xmlSerializer)
     {
@@ -69,11 +82,22 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         _localInterfaces = networkManager.GetAllBindInterfaces(true);
         _sessionManager = sessionManager;
         _taskManager = taskManager;
+        _appHost = appHost;
+        _configurationManager = configurationManager;
 
         sessionManager.SessionActivity += OnSessionManagerSessionActivity;
+        sessionManager.PlaybackProgress += OnPlaybackProgress;
 
         taskManager.TaskExecuting += OnTaskExecuting;
         taskManager.TaskCompleted += OnTaskCompleted;
+
+        _startedCallback = hostApplicationLifetime.ApplicationStarted.Register(OnApplicationStarted);
+        _shutdownCallback = hostApplicationLifetime.ApplicationStopping.Register(OnApplicationStopping);
+
+        configurationManager.ConfigurationUpdated += OnConfigurationUpdated;
+        ConfigurationChanged += OnConfigurationChanged;
+
+        //configurationManager.GetNetworkConfiguration().RequireHttps
     }
 
     /// <inheritdoc />
@@ -140,7 +164,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         _logger.LogDebug("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
 
         HandleUserActivity(e.SessionInfo);
-        }
+    }
 
     /// <summary>
     /// Called periodically while a session plays contents, including when paused.
@@ -169,6 +193,78 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         }
     }
 
+    private void SyncMdns()
+    {
+        MdnsConfig config = new MdnsConfig(Configuration.EnableMdns, _appHost.FriendlyName, _appHost.ListenWithHttps, _appHost.HttpPort, _appHost.HttpsPort);
+        if (config.Equals(_mdnsConfig))
+        {
+            return;
+        }
+
+        _mdnsConfig = config;
+
+        // Stop any existing announcer
+
+        _cfNet?.Dispose();
+        _cfNet = null;
+
+        // Setup new one
+
+        if (config.Enabled)
+        {
+            try
+            {
+                // TODO: check networkManager.GetBindAddress() is on local network or 0.0.0.0
+
+                if (config.ListenWithHttps)
+                {
+                    _cfNet = new CFNetRegister("_https._tcp,_jellyfin", config.FriendlyName, config.HttpsPort);
+                }
+                else
+                {
+                    _cfNet = new CFNetRegister("_http._tcp,_jellyfin", config.FriendlyName, config.HttpPort);
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning("Failed to register Bonjour/Zeroconf service: {0}", e.ToString());
+            }
+        }
+    }
+
+    private void OnApplicationStarted()
+    {
+        _logger.LogDebug("OnApplicationStarted");
+
+        SyncMdns();
+    }
+
+    private void OnApplicationStopping()
+    {
+        _cfNet?.Dispose();
+        _cfNet = null;
+    }
+
+    /// <summary>
+    /// Triggers on global configuration change.
+    /// </summary>
+    private void OnConfigurationUpdated(object? sender, EventArgs e)
+    {
+        _logger.LogInformation("OnConfigurationUpdated");
+
+        SyncMdns();
+    }
+
+    /// <summary>
+    /// Triggers on plugin configuration change.
+    /// </summary>
+    private void OnConfigurationChanged(object? sender, BasePluginConfiguration e)
+    {
+        _logger.LogInformation("OnConfigurationChanged");
+
+        SyncMdns();
+    }
+
     /// <inheritdoc/>
     public void Dispose()
     {
@@ -179,17 +275,43 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     protected virtual void Dispose(bool disposing)
     {
         if (disposing)
-    {
-        _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
+        {
+            _cfNet?.Dispose();
+
+            _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
             _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-        _taskManager.TaskExecuting -= OnTaskExecuting;
-        _taskManager.TaskCompleted -= OnTaskCompleted;
+            _taskManager.TaskExecuting -= OnTaskExecuting;
+            _taskManager.TaskCompleted -= OnTaskCompleted;
+
+            _configurationManager.ConfigurationUpdated -= OnConfigurationUpdated;
+            ConfigurationChanged -= OnConfigurationChanged;
+
+            _startedCallback.Dispose();
+            _shutdownCallback.Dispose();
 
             Task.Run(async () =>
             {
-        await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-        await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+                await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+                await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
             }).Wait();
+        }
+    }
+
+    private struct MdnsConfig
+    {
+        public bool Enabled;
+        public string FriendlyName;
+        public bool ListenWithHttps;
+        public int HttpPort;
+        public int HttpsPort;
+
+        public MdnsConfig(bool enabled, string name, bool useHttps, int httpPort, int httpsPort)
+        {
+            Enabled = enabled;
+            FriendlyName = name;
+            ListenWithHttps = useHttps;
+            HttpPort = httpPort;
+            HttpsPort = httpsPort;
         }
     }
 }

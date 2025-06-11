@@ -14,6 +14,7 @@ public class PluginConfiguration : BasePluginConfiguration
     {
         // set default options here
         OnlyInhibitRemote = true;
+        EnableMdns = false;
         ActivityIdleDelaySeconds = 120;
     }
 
@@ -26,4 +27,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets a value indicating whether only remote sessions inhibit idle.
     /// </summary>
     public bool OnlyInhibitRemote { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether host is announced using Bonjour / Zeroconf.
+    /// </summary>
+    public bool EnableMdns { get; set; }
 }

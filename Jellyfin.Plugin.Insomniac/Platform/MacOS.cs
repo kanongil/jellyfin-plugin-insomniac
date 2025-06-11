@@ -24,4 +24,12 @@ public sealed class MacOS
     {
         CFReleaseInternal(alloc);
     }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+
+    public struct CFStreamError
+    {
+        public long domain;
+        public int error;
+    }
 }
