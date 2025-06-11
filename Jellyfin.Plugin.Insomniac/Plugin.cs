@@ -195,7 +195,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
     private void SyncMdns()
     {
-        MdnsConfig config = new MdnsConfig(Configuration.EnableMdns, _appHost.FriendlyName, _appHost.ListenWithHttps, _appHost.HttpPort, _appHost.HttpsPort);
+        MdnsConfig config = new(Configuration.EnableMdns, _appHost.FriendlyName, _appHost.ListenWithHttps, _appHost.HttpPort, _appHost.HttpsPort);
         if (config.Equals(_mdnsConfig))
         {
             return;
@@ -214,16 +214,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         {
             try
             {
-                // TODO: check networkManager.GetBindAddress() is on local network or 0.0.0.0
+                // TODO: verify networkManager.GetBindAddress() is on local interface or 0.0.0.0
 
-                if (config.ListenWithHttps)
-                {
-                    _cfNet = new CFNetRegister("_https._tcp,_jellyfin", config.FriendlyName, config.HttpsPort);
-                }
-                else
-                {
-                    _cfNet = new CFNetRegister("_http._tcp,_jellyfin", config.FriendlyName, config.HttpPort);
-                }
+                _cfNet = config.ListenWithHttps ?
+                    new("_https._tcp,_jellyfin", config.FriendlyName, config.HttpsPort) :
+                    new("_http._tcp,_jellyfin", config.FriendlyName, config.HttpPort);
             }
             catch (Exception e)
             {
@@ -272,7 +267,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    protected virtual void Dispose(bool disposing)
+    protected virtual async void Dispose(bool disposing)
     {
         if (disposing)
         {
@@ -289,21 +284,18 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
             _startedCallback.Dispose();
             _shutdownCallback.Dispose();
 
-            Task.Run(async () =>
-            {
-                await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-                await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-            }).Wait();
+            await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+            await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     private struct MdnsConfig
     {
-        public bool Enabled;
-        public string FriendlyName;
-        public bool ListenWithHttps;
-        public int HttpPort;
-        public int HttpsPort;
+        public readonly bool Enabled;
+        public readonly string FriendlyName;
+        public readonly bool ListenWithHttps;
+        public readonly int HttpPort;
+        public readonly int HttpsPort;
 
         public MdnsConfig(bool enabled, string name, bool useHttps, int httpPort, int httpsPort)
         {
