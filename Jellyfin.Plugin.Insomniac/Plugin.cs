@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading;
-using System.Threading.Tasks;
 using Jellyfin.Data.Events;
 using Jellyfin.Plugin.Insomniac.Configuration;
 using Jellyfin.Plugin.Insomniac.Inhibitors;
@@ -48,9 +48,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     private readonly CancellationTokenRegistration _startedCallback;
     private readonly CancellationTokenRegistration _shutdownCallback;
 
-    private CFNetRegister? _cfNet;
+    private IServicePublisher? _servicePublisher;
     private int _activeTasks;
     private MdnsConfig? _mdnsConfig;
+    private SemaphoreSlim _syncLock = new(1, 1);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -193,37 +194,50 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         }
     }
 
-    private void SyncMdns()
+    private async void SyncMdns()
     {
         MdnsConfig config = new(Configuration.EnableMdns, _appHost.FriendlyName, _appHost.ListenWithHttps, _appHost.HttpPort, _appHost.HttpsPort);
-        if (config.Equals(_mdnsConfig))
+
+        await _syncLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return;
-        }
+            if (config.Equals(_mdnsConfig))
+            {
+                return;
+            }
 
-        _mdnsConfig = config;
+            _mdnsConfig = config;
 
-        // Stop any existing announcer
+            if (!config.Enabled)
+            {
+                _servicePublisher?.Dispose();
+                _servicePublisher = null;
+                return;
+            }
 
-        _cfNet?.Dispose();
-        _cfNet = null;
+            // Apply new configuration
 
-        // Setup new one
-
-        if (config.Enabled)
-        {
             try
             {
+                _servicePublisher ??= RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? new CFNetPublisher() : new AvahiPublisher();
+
                 // TODO: verify networkManager.GetBindAddress() is on local interface or 0.0.0.0
 
-                _cfNet = config.ListenWithHttps ?
-                    new("_https._tcp,_jellyfin", config.FriendlyName, config.HttpsPort) :
-                    new("_http._tcp,_jellyfin", config.FriendlyName, config.HttpPort);
+                var serviceType = config.ListenWithHttps ? "_https._tcp" : "_http._tcp";
+                var port = config.ListenWithHttps ? config.HttpsPort : config.HttpPort;
+                ServiceConfig serviceConfig = new(serviceType, subType: "_jellyfin", config.FriendlyName, port);
+
+                _logger.LogInformation("Publishing Bonjour/Zeroconf service using {0}", _servicePublisher);
+                await _servicePublisher.PublishConfig(serviceConfig).ConfigureAwait(false);
             }
             catch (Exception e)
             {
                 _logger.LogWarning("Failed to register Bonjour/Zeroconf service: {0}", e.ToString());
             }
+        }
+        finally
+        {
+            _syncLock.Release();
         }
     }
 
@@ -236,8 +250,16 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
     private void OnApplicationStopping()
     {
-        _cfNet?.Dispose();
-        _cfNet = null;
+        _syncLock.Wait();
+        try
+        {
+            _servicePublisher?.Dispose();
+            _servicePublisher = null;
+        }
+        finally
+        {
+            _syncLock.Release();
+        }
     }
 
     /// <summary>
@@ -271,7 +293,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     {
         if (disposing)
         {
-            _cfNet?.Dispose();
+            _servicePublisher?.Dispose();
 
             _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
             _sessionManager.PlaybackProgress -= OnPlaybackProgress;
@@ -283,6 +305,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
             _startedCallback.Dispose();
             _shutdownCallback.Dispose();
+            _syncLock.Dispose();
 
             await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
             await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
@@ -294,16 +317,16 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         public readonly bool Enabled;
         public readonly string FriendlyName;
         public readonly bool ListenWithHttps;
-        public readonly int HttpPort;
-        public readonly int HttpsPort;
+        public readonly ushort HttpPort;
+        public readonly ushort HttpsPort;
 
         public MdnsConfig(bool enabled, string name, bool useHttps, int httpPort, int httpsPort)
         {
             Enabled = enabled;
             FriendlyName = name;
             ListenWithHttps = useHttps;
-            HttpPort = httpPort;
-            HttpsPort = httpsPort;
+            HttpPort = (ushort)httpPort;
+            HttpsPort = (ushort)httpsPort;
         }
     }
 }
