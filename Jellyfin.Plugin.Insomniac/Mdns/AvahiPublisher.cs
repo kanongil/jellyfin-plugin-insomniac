@@ -15,10 +15,10 @@ public sealed class AvahiPublisher : IServicePublisher
 {
     private const int AVAHI_SERVER_RUNNING = 2;
 
+    private readonly SemaphoreSlim _transactionLock = new(1, 1);
     private Connection? _connection; // The life-time of the service registration is tied to the connection
     private IDisposable? _stateListener;
     private ServiceConfig _config;
-    private SemaphoreSlim _transactionLock = new(1, 1);
     private int _savedState = -1;
     private IServer? _server;
     private IEntryGroup? _group;
@@ -134,9 +134,7 @@ public sealed class AvahiPublisher : IServicePublisher
         {
             if (config is ServiceConfig c)
             {
-                Console.WriteLine("Get Group: " + _group);
                 var group = await GetEmptiedGroup(_server!).ConfigureAwait(false);
-                Console.WriteLine("Found Group: " + group.ToString());
 
                 await group.AddServiceAsync(
                     -1,
@@ -192,8 +190,6 @@ public sealed class AvahiPublisher : IServicePublisher
         _savedState = state;
 
         // This handles an initial bad state, as well as an Avahi daemon restart
-
-        Console.WriteLine("AVAHI STATE CHANGED TO: " + state);
 
         await CommitConfig(state == AVAHI_SERVER_RUNNING ? _config : null).ConfigureAwait(false);
     }

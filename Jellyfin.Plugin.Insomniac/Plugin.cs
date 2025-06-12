@@ -47,11 +47,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     private readonly IConfigurationManager _configurationManager;
     private readonly CancellationTokenRegistration _startedCallback;
     private readonly CancellationTokenRegistration _shutdownCallback;
+    private readonly SemaphoreSlim _syncLock = new(1, 1);
 
     private IServicePublisher? _servicePublisher;
     private int _activeTasks;
     private MdnsConfig? _mdnsConfig;
-    private SemaphoreSlim _syncLock = new(1, 1);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.

@@ -87,7 +87,7 @@ public sealed class CFNetPublisher : IServicePublisher
 
             bool res = CFNetServiceRegisterWithOptions(service, 0, pnt) != 0;
             error = (MacOS.CFStreamError)Marshal.PtrToStructure(pnt, typeof(MacOS.CFStreamError))!;
-            if (res == false && error.error != kCFNetServiceErrorCancel)
+            if (!res && error.error != kCFNetServiceErrorCancel)
             {
                 Console.WriteLine("CFNetServiceRegisterWithOptions() failed with error code={0}", error.error);
             }
