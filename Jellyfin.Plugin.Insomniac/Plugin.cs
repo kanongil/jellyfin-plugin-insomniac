@@ -267,7 +267,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     /// </summary>
     private void OnConfigurationUpdated(object? sender, EventArgs e)
     {
-        _logger.LogInformation("OnConfigurationUpdated");
+        _logger.LogDebug("OnConfigurationUpdated");
 
         SyncMdns();
     }
@@ -277,7 +277,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     /// </summary>
     private void OnConfigurationChanged(object? sender, BasePluginConfiguration e)
     {
-        _logger.LogInformation("OnConfigurationChanged");
+        _logger.LogDebug("OnConfigurationChanged");
 
         SyncMdns();
     }
