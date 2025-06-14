@@ -3,19 +3,23 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net;
-using System.Threading.Tasks;
+using System.Runtime.InteropServices;
+using System.Threading;
 using Jellyfin.Data.Events;
 using Jellyfin.Plugin.Insomniac.Configuration;
 using Jellyfin.Plugin.Insomniac.Inhibitors;
+using Jellyfin.Plugin.Insomniac.Mdns;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Insomniac;
@@ -39,8 +43,15 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
     private readonly IReadOnlyList<IPData> _localInterfaces;
     private readonly ISessionManager _sessionManager;
     private readonly ITaskManager _taskManager;
+    private readonly IServerApplicationHost _appHost;
+    private readonly IConfigurationManager _configurationManager;
+    private readonly CancellationTokenRegistration _startedCallback;
+    private readonly CancellationTokenRegistration _shutdownCallback;
+    private readonly SemaphoreSlim _syncLock = new(1, 1);
 
+    private IServicePublisher? _servicePublisher;
     private int _activeTasks;
+    private MdnsConfig? _mdnsConfig;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -57,6 +68,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         ISessionManager sessionManager,
         INetworkManager networkManager,
         ITaskManager taskManager,
+        IServerApplicationHost appHost,
+        IHostApplicationLifetime hostApplicationLifetime,
+        IConfigurationManager configurationManager,
         ILoggerFactory loggerFactory)
         : base(applicationPaths, xmlSerializer)
     {
@@ -69,11 +83,22 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         _localInterfaces = networkManager.GetAllBindInterfaces(true);
         _sessionManager = sessionManager;
         _taskManager = taskManager;
+        _appHost = appHost;
+        _configurationManager = configurationManager;
 
         sessionManager.SessionActivity += OnSessionManagerSessionActivity;
+        sessionManager.PlaybackProgress += OnPlaybackProgress;
 
         taskManager.TaskExecuting += OnTaskExecuting;
         taskManager.TaskCompleted += OnTaskCompleted;
+
+        _startedCallback = hostApplicationLifetime.ApplicationStarted.Register(OnApplicationStarted);
+        _shutdownCallback = hostApplicationLifetime.ApplicationStopping.Register(OnApplicationStopping);
+
+        configurationManager.ConfigurationUpdated += OnConfigurationUpdated;
+        ConfigurationChanged += OnConfigurationChanged;
+
+        //configurationManager.GetNetworkConfiguration().RequireHttps
     }
 
     /// <inheritdoc />
@@ -140,7 +165,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         _logger.LogDebug("SessionActivity from {0}, remote={1}", e.SessionInfo.RemoteEndPoint, IsRemoteSession(e.SessionInfo));
 
         HandleUserActivity(e.SessionInfo);
-        }
+    }
 
     /// <summary>
     /// Called periodically while a session plays contents, including when paused.
@@ -169,6 +194,94 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         }
     }
 
+    private async void SyncMdns()
+    {
+        MdnsConfig config = new(Configuration.EnableMdns, _appHost.FriendlyName, _appHost.ListenWithHttps, _appHost.HttpPort, _appHost.HttpsPort);
+
+        await _syncLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (config.Equals(_mdnsConfig))
+            {
+                return;
+            }
+
+            _mdnsConfig = config;
+
+            if (!config.Enabled)
+            {
+                _servicePublisher?.Dispose();
+                _servicePublisher = null;
+                return;
+            }
+
+            // Apply new configuration
+
+            try
+            {
+                _servicePublisher ??= RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? new CFNetPublisher() : new AvahiPublisher();
+
+                // TODO: verify networkManager.GetBindAddress() is on local interface or 0.0.0.0
+
+                var serviceType = config.ListenWithHttps ? "_https._tcp" : "_http._tcp";
+                var port = config.ListenWithHttps ? config.HttpsPort : config.HttpPort;
+                ServiceConfig serviceConfig = new(serviceType, subType: "_jellyfin", config.FriendlyName, port);
+
+                _logger.LogInformation("Publishing Bonjour/Zeroconf service using {0}", _servicePublisher);
+                await _servicePublisher.PublishConfig(serviceConfig).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning("Failed to register Bonjour/Zeroconf service: {0}", e.ToString());
+            }
+        }
+        finally
+        {
+            _syncLock.Release();
+        }
+    }
+
+    private void OnApplicationStarted()
+    {
+        _logger.LogDebug("OnApplicationStarted");
+
+        SyncMdns();
+    }
+
+    private void OnApplicationStopping()
+    {
+        _syncLock.Wait();
+        try
+        {
+            _servicePublisher?.Dispose();
+            _servicePublisher = null;
+        }
+        finally
+        {
+            _syncLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Triggers on global configuration change.
+    /// </summary>
+    private void OnConfigurationUpdated(object? sender, EventArgs e)
+    {
+        _logger.LogDebug("OnConfigurationUpdated");
+
+        SyncMdns();
+    }
+
+    /// <summary>
+    /// Triggers on plugin configuration change.
+    /// </summary>
+    private void OnConfigurationChanged(object? sender, BasePluginConfiguration e)
+    {
+        _logger.LogDebug("OnConfigurationChanged");
+
+        SyncMdns();
+    }
+
     /// <inheritdoc/>
     public void Dispose()
     {
@@ -176,20 +289,44 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    protected virtual void Dispose(bool disposing)
+    protected virtual async void Dispose(bool disposing)
     {
         if (disposing)
-    {
-        _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
-            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-        _taskManager.TaskExecuting -= OnTaskExecuting;
-        _taskManager.TaskCompleted -= OnTaskCompleted;
+        {
+            _servicePublisher?.Dispose();
 
-            Task.Run(async () =>
-            {
-        await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-        await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
-            }).Wait();
+            _sessionManager.SessionActivity -= OnSessionManagerSessionActivity;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
+            _taskManager.TaskExecuting -= OnTaskExecuting;
+            _taskManager.TaskCompleted -= OnTaskCompleted;
+
+            _configurationManager.ConfigurationUpdated -= OnConfigurationUpdated;
+            ConfigurationChanged -= OnConfigurationChanged;
+
+            _startedCallback.Dispose();
+            _shutdownCallback.Dispose();
+            _syncLock.Dispose();
+
+            await _sessionIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+            await _taskIdleInhibitor.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private struct MdnsConfig
+    {
+        public readonly bool Enabled;
+        public readonly string FriendlyName;
+        public readonly bool ListenWithHttps;
+        public readonly ushort HttpPort;
+        public readonly ushort HttpsPort;
+
+        public MdnsConfig(bool enabled, string name, bool useHttps, int httpPort, int httpsPort)
+        {
+            Enabled = enabled;
+            FriendlyName = name;
+            ListenWithHttps = useHttps;
+            HttpPort = (ushort)httpPort;
+            HttpsPort = (ushort)httpsPort;
         }
     }
 }
