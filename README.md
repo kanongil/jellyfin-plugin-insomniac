@@ -31,7 +31,7 @@ To help with this, the plugin can be [configured to automatically announce the s
 ## Limitations
 
 - Does not wake the server again. Neither for scheduled timers, nor for network requests.
-  - *Note that the network request wake limitation can be mitigated using the mDNS service service announcement
+  - *Note that the network request wake limitation can be mitigated using the mDNS service announcement
   on networks that support [Bonjour Sleep Proxy](https://en.wikipedia.org/wiki/Bonjour_Sleep_Proxy)*.
 - Live TV scheduled recordings are not supported, and could be missed if the host is sleeping.
 - Clients can provide limited interaction signals while not actively consuming content, causing the inhibition removal delay to trigger.
